@@ -86,6 +86,12 @@ button.sec{background:#fff;border:1px solid #d5d5d5;border-radius:8px;padding:9p
     <div><label class="f">해당연도</label><input type="number" id="inYear" min="2020" max="2099"></div>
     <div><label class="f">해당월</label><input type="number" id="inMonth" min="1" max="12"></div>
   </div>
+  <div id="trendBox" class="grid" style="margin-top:12px;display:none;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px">
+    <div style="grid-column:1/-1;font-size:12px;color:#b26a00">트렌드뉴스 소재입니다. 실제 광고주명과 3P 표에 넣을 편성기간을 입력해 주세요.</div>
+    <div><label class="f">광고주명 (보고서 표시용)</label><input type="text" id="inClient" placeholder="예: 한서대학교"></div>
+    <div><label class="f">편성기간 시작</label><input type="date" id="inPs"></div>
+    <div><label class="f">편성기간 종료</label><input type="date" id="inPe"></div>
+  </div>
   <div id="creBox" style="margin-top:14px"></div>
 </section>
 
@@ -239,7 +245,10 @@ function buildCreList(){   // 광고주 드롭다운 (편성표 광고주명 셀
 
 /* ==================== 2~3. 소재/매체 ==================== */
 // 규칙: 광고주명 셀이 입력한 광고주명을 '포함'하면 해당 광고주의 소재 (띄어쓰기 무시)
-const advIs = (row,adv)=> !!adv && norm(row.adv).includes(norm(adv));
+const isTrend = ()=> /트렌드뉴스/.test(currentAdv());
+const advIs = (row,adv)=> !!adv && (isTrend() ? norm(row.adv)===norm(adv) : norm(row.adv).includes(norm(adv)));
+const trendTitle = ()=> currentAdv().replace(/_/g,' ').replace(/\s+/g,' ').trim();
+const clientName = ()=> $('#inClient').value.trim();
 const rowMatch = (r,adv)=> advIs(r,adv);
 function currentAdv(){ return $('#inAdv').value.trim(); }
 function activeCres(){ return S.cres.filter(c=>c.on); }
@@ -285,6 +294,7 @@ function autoSelectMedia(){
     if(['CMT','PMT'].some(id=>S.sched[id]&&S.sched[id].left.some(r=>r.sync&&advIs(r,adv)))) S.sel.add('SYNC_SS');
     if(S.sched.HD&&S.sched.HD.left.some(r=>r.sync&&advIs(r,adv))) S.sel.add('SYNC_HD');
   }
+  $('#trendBox').style.display = isTrend()? 'grid':'none';
   buildCres();
   renderMedia();
 }
@@ -320,6 +330,7 @@ function matchedRows(){
   return out;
 }
 function period(){
+  if(isTrend()){ const a=$('#inPs').value,b=$('#inPe').value; if(a&&b) return a.replace(/-/g,'.')+' ~ '+b.replace(/-/g,'.'); }
   const rows=matchedRows(); let s=null,e=null;
   for(const {r} of rows){ const a=toDate(r.s),b=toDate(r.e); if(a&&(!s||a<s)) s=a; if(b&&(!e||b>e)) e=b; }
   return (s&&e)? fmtDate(s,'.')+' ~ '+fmtDate(e,'.') : '';
@@ -487,7 +498,9 @@ async function generate(){
     // 기존 슬라이드 파트 제거
     for(const t of T){ zip.remove(t.path); const rp='ppt/slides/_rels/'+t.path.split('/').pop()+'.rels'; if(zip.file(rp)) zip.remove(rp); }
 
-    const tok={YY:String(year).slice(-2), YEAR:String(year), MONTH:String(month), MEDIA:mname, ADV:adv, ADVCRE: advcre, PERIOD:period()||'', MEDIALIST: MEDIA.filter(m=>S.sel.has(m.id)).map(m=>m.full).join('\n')};
+    const trend=isTrend(), client=clientName();
+    if(trend&&!client){ if(!confirm('광고주명(보고서 표시용)이 비어 있습니다. 그대로 진행할까요?')) { btn.disabled=false; status(''); return; } }
+    const tok={YY:String(year).slice(-2), YEAR:String(year), MONTH:String(month), MEDIA: trend? trendTitle() : mname, ADV: trend? client : adv, ADVCRE: trend? client : advcre, PERIOD:period()||'', MEDIALIST: MEDIA.filter(m=>S.sel.has(m.id)).map(m=>m.full).join('\n')};
     const out=[]; // {xml, rels:string, media:[{name,blob}]}
     let picId=5000, mediaN=0;
     const clone=(i)=>({xml:replaceTokens(T[i].xml,tok), rels:T[i].rels, media:[]});
@@ -507,7 +520,9 @@ async function generate(){
         let after=p0; for(const line of lines.slice(1)){ const np=p0.cloneNode(true); np.getElementsByTagName('a:t')[0].textContent=line; after.parentNode.insertBefore(np,after.nextSibling); after=np; } }
       s.xml=ser.serializeToString(doc); out.push(s); }
     // 3 집행 내역: 선택 매체 행만
-    { const s=clone(2); if(cres.length>1) s.xml=s.xml.split(esc(advcre)).join(esc(adv)+' ');   // 소재 여러 개면 3P 제목은 광고주명만 (표지에 소재 목록)
+    { const s=clone(2);
+      if(trend) s.xml=s.xml.replace(esc(trendTitle())+' '+esc(client)+' ', esc(trendTitle())+' ');   // 트렌드뉴스: 3P 제목에는 광고주명 제외
+      else if(cres.length>1) s.xml=s.xml.split(esc(advcre)).join(esc(adv)+' ');   // 소재 여러 개면 3P 제목은 광고주명만 (표지에 소재 목록)
       const doc=parser.parseFromString(s.xml,'application/xml');
       const tbl=findShape(doc,'SUMMARY_TABLE').getElementsByTagName('a:tbl')[0]; const trs=[...tbl.getElementsByTagName('a:tr')];
       for(const m of MAIN){
@@ -579,7 +594,8 @@ async function generate(){
     status('PPTX 압축 중…');
     const blob=await zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.presentationml.presentation',compression:'DEFLATE'});
     const td=new Date(), ymd=String(td.getFullYear()).slice(-2)+pad2(td.getMonth()+1)+pad2(td.getDate());
-    const fname=`중앙일보_${mname.replace(/&/g,'_')}_게첨완료보고_${ymd}_${adv}.pptx`.replace(/[\\/:*?"<>|]/g,'_');
+    const mfile=mname.replace('삼성동 OOH','삼성동').replace(/&/g,'_');
+    const fname= trend ? `중앙일보_${mfile}_${trendTitle()}_게첨완료보고_${ymd}_${client||adv}.pptx` : `중앙일보_${mname.replace(/&/g,'_')}_게첨완료보고_${ymd}_${adv}.pptx`.replace(/[\\/:*?"<>|]/g,'_');
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; a.click();
     status(`완료: ${fname} (${out.length}장, ${(blob.size/1024/1024).toFixed(1)}MB)`,'ok');
     $('#pv').textContent=`슬라이드 구성 (${out.length}장)\n1 표지 · 2 목차 · 3 광고 집행 내역\n편성표: ${MAIN.filter(m=>S.sel.has(m.id)&&S.sched[m.id]).map(m=>m.full).join(', ')||'없음'}\n현장 사진: ${MEDIA.filter(m=>S.sel.has(m.id)).map(m=>m.full).join(', ')}\n마지막: E.O.D`;
@@ -596,6 +612,7 @@ async function generate(){
   dz.ondrop=e=>{e.preventDefault();dz.classList.remove('over'); addXlFiles([...e.dataTransfer.files].filter(f=>/\.xlsx?$/i.test(f.name)));};
   $('#selAdv').onchange=e=>{ if(!e.target.value) return; $('#inAdv').value=e.target.value; autoSelectMedia(); };
   $('#inAdv').oninput=()=>{ autoSelectMedia(); };
+  ['#inClient','#inPs','#inPe'].forEach(id=>$(id).oninput=()=>refreshPreview());
   $('#btnGen').onclick=generate;
   renderChips(); renderMedia(); renderCres();
 })();
